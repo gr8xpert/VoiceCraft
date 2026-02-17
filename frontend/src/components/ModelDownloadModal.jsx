@@ -19,7 +19,7 @@ function ModelDownloadModal({ apiUrl, onComplete }) {
     models: { status: 'checking', downloaded: false },
   });
 
-  const [selectedModels, setSelectedModels] = useState(['turbo']);
+  const [selectedModels, setSelectedModels] = useState(['original']);
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadMessage, setDownloadMessage] = useState('');
@@ -31,19 +31,13 @@ function ModelDownloadModal({ apiUrl, onComplete }) {
       name: 'Original',
       description: 'Best quality English TTS (0.5B params)',
       size: '~1.5 GB',
+      recommended: true,
     },
     {
       id: 'multilingual',
       name: 'Multilingual',
       description: '23 languages supported (0.5B params)',
       size: '~1.5 GB',
-    },
-    {
-      id: 'turbo',
-      name: 'Turbo',
-      description: 'Fastest generation with expression tags (350M params)',
-      size: '~700 MB',
-      recommended: true,
     },
   ];
 
@@ -105,37 +99,66 @@ function ModelDownloadModal({ apiUrl, onComplete }) {
     setIsDownloading(true);
     setError(null);
     setDownloadProgress(0);
-    setDownloadMessage('Initializing download...');
+    setDownloadMessage('Connecting to HuggingFace Hub...');
 
     try {
-      // For now, just trigger a model reload which will download if needed
-      // The actual download progress would require WebSocket support
+      // Start progress animation
+      let progress = 0;
+      const progressInterval = setInterval(() => {
+        if (progress < 90) {
+          progress += 2;
+          setDownloadProgress(progress);
+          if (progress < 20) {
+            setDownloadMessage('Connecting to HuggingFace Hub...');
+          } else if (progress < 50) {
+            setDownloadMessage('Downloading model files (~1.5 GB)...');
+          } else if (progress < 80) {
+            setDownloadMessage('Loading model into GPU memory...');
+          } else {
+            setDownloadMessage('Initializing TTS engine...');
+          }
+        }
+      }, 1000);
+
+      // Trigger model reload which will download if needed
       const res = await fetch(`${apiUrl}/restart_server`, {
         method: 'POST',
       });
 
+      clearInterval(progressInterval);
+
       if (!res.ok) {
-        throw new Error('Download failed');
+        const errorData = await res.json().catch(() => ({}));
+        const errorDetail = errorData.detail || 'Unknown error';
+
+        // Provide helpful error messages
+        if (errorDetail.includes('network') || errorDetail.includes('connection')) {
+          throw new Error('Network error: Please check your internet connection and try again.');
+        } else if (errorDetail.includes('space') || errorDetail.includes('disk')) {
+          throw new Error('Disk space error: Please free up at least 5GB of disk space.');
+        } else if (errorDetail.includes('CUDA') || errorDetail.includes('GPU')) {
+          throw new Error('GPU error: ' + errorDetail);
+        } else {
+          throw new Error('Download failed: ' + errorDetail);
+        }
       }
 
-      // Simulate progress (actual progress would come from backend)
-      for (let i = 0; i <= 100; i += 10) {
-        setDownloadProgress(i);
-        setDownloadMessage(
-          i < 30
-            ? 'Downloading model files...'
-            : i < 70
-            ? 'Extracting model...'
-            : i < 90
-            ? 'Loading model into memory...'
-            : 'Finalizing...'
-        );
-        await new Promise((r) => setTimeout(r, 500));
-      }
+      setDownloadProgress(100);
+      setDownloadMessage('Model loaded successfully!');
+      await new Promise((r) => setTimeout(r, 1000));
 
       onComplete();
     } catch (err) {
-      setError(err.message);
+      let errorMessage = err.message;
+
+      // Add helpful suggestions based on error type
+      if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+        errorMessage = 'Network error: Cannot connect to backend server. Please restart the app.';
+      } else if (err.message.includes('timeout')) {
+        errorMessage = 'Download timed out. Please check your internet connection and try again.';
+      }
+
+      setError(errorMessage);
       setIsDownloading(false);
     }
   };
