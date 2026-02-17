@@ -174,12 +174,16 @@ export async function uploadReferenceAudio(file) {
     body: formData,
   });
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(errorData.detail || `Upload failed: ${res.status}`);
+  const data = await res.json().catch(() => ({ errors: [{ error: 'Unknown error' }] }));
+
+  // Check for errors in the response (server returns errors array)
+  if (!res.ok || (data.errors && data.errors.length > 0 && data.uploaded_files?.length === 0)) {
+    // Extract error message from the errors array
+    const errorMsg = data.errors?.[0]?.error || data.detail || `Upload failed: ${res.status}`;
+    throw new Error(errorMsg);
   }
 
-  return res.json();
+  return data;
 }
 
 /**
