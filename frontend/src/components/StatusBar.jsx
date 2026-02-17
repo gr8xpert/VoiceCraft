@@ -108,9 +108,9 @@ function StatusBar() {
   };
 
   return (
-    <footer className="h-10 px-4 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex items-center justify-between text-xs">
+    <footer className="h-10 px-4 border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex items-center text-xs">
       {/* Left side - System info */}
-      <div className="flex items-center gap-6">
+      <div className="flex items-center gap-6 flex-1">
         {/* Device/GPU - Green when CUDA is active */}
         <div className={`flex items-center gap-2 ${modelInfo?.device === 'cuda' ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}>
           <Cpu className="w-4 h-4" />
@@ -134,8 +134,13 @@ function StatusBar() {
         </div>
       </div>
 
+      {/* Center - Credits */}
+      <div className="flex-1 text-center text-[var(--color-text-muted)]">
+        Helpful? Keep me in your prayers - Regards Shahzaib Aslam
+      </div>
+
       {/* Right side - Status */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-1 justify-end">
         {getStatusIcon()}
         <span
           className={`${
