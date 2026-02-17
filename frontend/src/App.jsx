@@ -116,16 +116,30 @@ function App() {
 
   // Loading screen
   if (backendStatus === 'loading' || backendStatus === 'restarting') {
+    // Check if message contains error details
+    const hasError = backendMessage && backendMessage.includes('Error:');
+    const [mainMsg, errorDetail] = hasError
+      ? backendMessage.split('\n\nError:')
+      : [backendMessage, null];
+
     return (
-      <div className="h-full flex flex-col items-center justify-center bg-[var(--color-bg-primary)]">
-        <div className="flex flex-col items-center gap-4">
+      <div className="h-full flex flex-col items-center justify-center bg-[var(--color-bg-primary)] p-4">
+        <div className="flex flex-col items-center gap-4 max-w-2xl w-full">
           <Loader2 className="w-12 h-12 text-[var(--color-accent)] animate-spin" />
           <h1 className="text-2xl font-semibold text-[var(--color-text-primary)]">
             VoiceCraft
           </h1>
           <p className="text-[var(--color-text-secondary)]">
-            {backendMessage || 'Starting backend...'}
+            {mainMsg || 'Starting backend...'}
           </p>
+          {errorDetail && (
+            <div className="w-full mt-4 p-3 bg-[var(--color-bg-tertiary)] border border-[var(--color-error)] rounded-lg">
+              <p className="text-xs text-[var(--color-error)] font-medium mb-2">Error Details:</p>
+              <pre className="text-xs text-[var(--color-text-secondary)] whitespace-pre-wrap break-all max-h-40 overflow-y-auto font-mono">
+                {errorDetail.trim()}
+              </pre>
+            </div>
+          )}
         </div>
       </div>
     );
