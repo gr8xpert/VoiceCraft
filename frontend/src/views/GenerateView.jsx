@@ -273,32 +273,37 @@ function GenerateView() {
               ))}
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <select
-                className="select flex-1 !py-1 text-sm"
-                value={selectedReferenceAudio || ''}
-                onChange={(e) => setSelectedReferenceAudio(e.target.value)}
-              >
-                <option value="">Select reference...</option>
-                {referenceFiles.map((file) => (
-                  <option key={file} value={file}>{file}</option>
-                ))}
-              </select>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".wav,.mp3"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
-                className="btn-secondary !py-1 !px-2 text-xs flex items-center gap-1"
-              >
-                {isUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-                Upload
-              </button>
+            <div>
+              <div className="flex items-center gap-2">
+                <select
+                  className="select flex-1 !py-1 text-sm"
+                  value={selectedReferenceAudio || ''}
+                  onChange={(e) => setSelectedReferenceAudio(e.target.value)}
+                >
+                  <option value="">Select reference...</option>
+                  {referenceFiles.map((file) => (
+                    <option key={file} value={file}>{file}</option>
+                  ))}
+                </select>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".wav,.mp3"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  className="btn-secondary !py-1 !px-2 text-xs flex items-center gap-1"
+                >
+                  {isUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                  Upload
+                </button>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                Upload a clear voice clip (5-60 sec, WAV/MP3)
+              </p>
             </div>
           )}
           {uploadError && (
