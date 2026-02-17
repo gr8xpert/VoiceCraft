@@ -16,12 +16,13 @@ torchvision==0.20.1
 torchaudio==2.5.1
 
 # --- Core TTS Application ---
-# Chatterbox TTS engine - Install from chatterbox-v2 fork
-chatterbox-tts @ git+https://github.com/devnen/chatterbox-v2.git@master
+# Chatterbox TTS engine - Install from chatterbox-v2 fork (using zip to avoid git dependency)
+chatterbox-tts @ https://github.com/devnen/chatterbox-v2/archive/refs/heads/master.zip
 
 # --- Web Framework & Server ---
 fastapi                         # Modern async web framework
 uvicorn[standard]               # ASGI server with performance extras
+setuptools<70                   # Required for pkg_resources (used by perth) - v70+ removed pkg_resources
 
 # --- Scientific Computing & ML Libraries ---
 numpy>=1.24.0,<1.26.0           # Fundamental numerical computing

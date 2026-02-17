@@ -3,7 +3,12 @@
 # Handles API requests for text-to-speech generation, UI serving,
 # configuration management, and file uploads.
 
+# Ensure the script's directory is in sys.path for local imports
+import sys
 import os
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
 import io
 import logging
 import logging.handlers  # For RotatingFileHandler
@@ -14,6 +19,17 @@ import yaml  # For loading presets
 import numpy as np
 import librosa  # For potential direct use if needed, though utils.py handles most
 from pathlib import Path
+
+# VoiceCraft: Allow port override from Electron
+VOICECRAFT_PORT = int(os.environ.get('VOICECRAFT_PORT', 0))
+VOICECRAFT_DATA_DIR = os.environ.get('VOICECRAFT_DATA_DIR', '')
+
+# VoiceCraft: Import extension routes
+try:
+    from backend_extensions import routes as voicecraft_routes
+    VOICECRAFT_EXTENSIONS_AVAILABLE = True
+except ImportError:
+    VOICECRAFT_EXTENSIONS_AVAILABLE = False
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Literal
 import webbrowser  # For automatic browser opening
@@ -155,13 +171,17 @@ async def lifespan(app: FastAPI):
             )
         else:
             logger.info("TTS Model loaded successfully via engine.")
-            host_address = get_host()
-            server_port = get_port()
-            browser_thread = threading.Thread(
-                target=lambda: _delayed_browser_open(host_address, server_port),
-                daemon=True,
-            )
-            browser_thread.start()
+            # Only auto-open browser if NOT running in Electron
+            if not os.environ.get("VOICECRAFT_ELECTRON"):
+                host_address = get_host()
+                server_port = get_port()
+                browser_thread = threading.Thread(
+                    target=lambda: _delayed_browser_open(host_address, server_port),
+                    daemon=True,
+                )
+                browser_thread.start()
+            else:
+                logger.info("Running in Electron - skipping browser auto-open.")
 
         logger.info("Application startup sequence complete.")
         startup_complete_event.set()
@@ -190,9 +210,18 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*", "null"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# --- VoiceCraft Extension Routes ---
+if VOICECRAFT_EXTENSIONS_AVAILABLE:
+    try:
+        voicecraft_routes.init_databases()
+        app.include_router(voicecraft_routes.router)
+        logger.info("VoiceCraft extension routes registered successfully")
+    except Exception as e:
+        logger.warning(f"Failed to register VoiceCraft extension routes: {e}")
 
 # --- Static Files and HTML Templates ---
 ui_static_path = Path(__file__).parent / "ui"
@@ -898,10 +927,10 @@ async def custom_tts_endpoint(
     )
 
     if request.split_text and len(request.text) > (
-        request.chunk_size * 1.5 if request.chunk_size else 120 * 1.5
+        request.chunk_size * 1.5 if request.chunk_size else 250 * 1.5
     ):
         chunk_size_to_use = (
-            request.chunk_size if request.chunk_size is not None else 120
+            request.chunk_size if request.chunk_size is not None else 250
         )
         logger.info(f"Splitting text into chunks of size ~{chunk_size_to_use}.")
         text_chunks = utils.chunk_text_by_sentences(request.text, chunk_size_to_use)
@@ -1340,13 +1369,18 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
 # --- Main Execution ---
 if __name__ == "__main__":
     server_host = get_host()
-    server_port = get_port()
+    # VoiceCraft: Use port override from Electron if set
+    server_port = VOICECRAFT_PORT or get_port()
 
     logger.info(f"Starting TTS Server directly on http://{server_host}:{server_port}")
     logger.info(
         f"API documentation will be available at http://{server_host}:{server_port}/docs"
     )
     logger.info(f"Web UI will be available at http://{server_host}:{server_port}/")
+    if VOICECRAFT_PORT:
+        logger.info(f"Running in VoiceCraft desktop mode (port override from VOICECRAFT_PORT)")
+    if VOICECRAFT_DATA_DIR:
+        logger.info(f"VoiceCraft data directory: {VOICECRAFT_DATA_DIR}")
 
     import uvicorn
 

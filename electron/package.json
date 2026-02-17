@@ -1,0 +1,99 @@
+{
+  "name": "voicecraft-electron",
+  "version": "1.0.0",
+  "description": "VoiceCraft Desktop App - Electron Shell",
+  "main": "main.js",
+  "author": "VoiceCraft Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "34.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.voicecraft.desktop",
+    "productName": "VoiceCraft",
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
+    "directories": {
+      "output": "../dist-electron"
+    },
+    "files": [
+      "**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "..",
+        "to": "backend",
+        "filter": [
+          "server.py",
+          "engine.py",
+          "config.py",
+          "models.py",
+          "utils.py",
+          "download_model.py",
+          "start.py",
+          "start.bat",
+          "start.sh",
+          "requirements.txt",
+          "requirements-nvidia.txt",
+          "config.yaml"
+        ]
+      },
+      {
+        "from": "../backend_extensions",
+        "to": "backend/backend_extensions",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../voices",
+        "to": "backend/voices",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../reference_audio",
+        "to": "backend/reference_audio",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "icons/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "icons/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "icons/icon.png",
+      "category": "AudioVideo"
+    }
+  }
+}
