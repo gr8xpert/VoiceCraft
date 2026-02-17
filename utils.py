@@ -1200,15 +1200,16 @@ def get_predefined_voices() -> List[Dict[str, str]]:
 
 
 def validate_reference_audio(
-    file_path: Path, max_duration_sec: Optional[int] = None
+    file_path: Path, max_duration_sec: Optional[int] = None, min_duration_sec: Optional[int] = 5
 ) -> Tuple[bool, str]:
     """
     Validates a reference audio file. Checks for existence, valid audio type (WAV/MP3),
-    and optionally enforces a maximum duration.
+    and optionally enforces minimum and maximum duration.
 
     Args:
         file_path: Path object for the reference audio file.
-        max_duration_sec: Optional maximum duration in seconds. If None, duration is not checked.
+        max_duration_sec: Optional maximum duration in seconds. If None, max duration is not checked.
+        min_duration_sec: Optional minimum duration in seconds. Default 5s for voice cloning.
 
     Returns:
         A tuple (is_valid: bool, message: str).
@@ -1219,25 +1220,33 @@ def validate_reference_audio(
     if file_path.suffix.lower() not in [".wav", ".mp3"]:
         return False, "Invalid reference audio file type. Please use WAV or MP3 format."
 
-    if max_duration_sec is not None and max_duration_sec > 0:
-        try:
-            audio_info = sf.info(str(file_path))
-            duration = audio_info.duration
-            if duration <= 0:
+    try:
+        audio_info = sf.info(str(file_path))
+        duration = audio_info.duration
+        if duration <= 0:
+            return (
+                False,
+                f"Reference audio file '{file_path.name}' has zero or negative duration.",
+            )
+        # Check minimum duration
+        if min_duration_sec is not None and min_duration_sec > 0:
+            if duration < min_duration_sec:
                 return (
                     False,
-                    f"Reference audio file '{file_path.name}' has zero or negative duration.",
+                    f"Reference audio too short ({duration:.1f}s). Minimum {min_duration_sec} seconds required for voice cloning.",
                 )
+        # Check maximum duration
+        if max_duration_sec is not None and max_duration_sec > 0:
             if duration > max_duration_sec:
                 return (
                     False,
-                    f"Reference audio duration ({duration:.2f}s) exceeds maximum allowed ({max_duration_sec}s).",
+                    f"Reference audio too long ({duration:.1f}s). Maximum {max_duration_sec} seconds allowed.",
                 )
-        except Exception as e:
-            logger.warning(
-                f"Could not accurately determine duration of reference audio '{file_path.name}': {e}. "
-                f"Skipping duration check for this file."
-            )
+    except Exception as e:
+        logger.warning(
+            f"Could not accurately determine duration of reference audio '{file_path.name}': {e}. "
+            f"Skipping duration check for this file."
+        )
     return True, "Reference audio appears valid."
 
 

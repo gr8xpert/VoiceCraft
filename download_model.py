@@ -3,8 +3,14 @@
 # This script focuses on ensuring the core engine model files are available locally
 # in the path specified by the application's configuration.
 
-import logging
+# Ensure the script's directory is in sys.path for local imports
+import sys
 import os
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
+import logging
 from pathlib import Path
 from huggingface_hub import hf_hub_download
 

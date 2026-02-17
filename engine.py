@@ -329,6 +329,14 @@ def load_model() -> bool:
             # Load the model using from_pretrained - handles HuggingFace downloads automatically
             chatterbox_model = model_class.from_pretrained(device=model_device)
 
+            # Enable half precision (fp16) for faster GPU inference
+            if model_device == "cuda":
+                try:
+                    chatterbox_model = chatterbox_model.half()
+                    logger.info("Enabled half precision (fp16) for faster GPU inference")
+                except Exception as e_half:
+                    logger.warning(f"Could not enable fp16, using fp32: {e_half}")
+
             # Store model metadata
             loaded_model_type = model_type
             loaded_model_class_name = model_class.__name__

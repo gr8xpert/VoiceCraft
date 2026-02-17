@@ -46,3 +46,22 @@ htmlcov/
 
 # Ignore log files
 *.log
+logs/
+
+# VoiceCraft Desktop App
+node_modules/
+frontend/dist/
+dist-electron/
+*.asar
+data/
+voicecraft.db
+
+# Package lock files (optional - can be kept)
+# package-lock.json
+
+# Electron builder output
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.snap
