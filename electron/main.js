@@ -127,12 +127,15 @@ async function startBackend(port) {
     console.log(`[Electron] Python exited with code ${code}`);
     if (code !== 0 && !app.isQuitting) {
       restartCount++;
+      // Show error details immediately on first crash
+      const errorPreview = stderrBuffer.slice(-300).trim();
       if (restartCount <= maxRestarts) {
         console.log(`[Electron] Auto-restarting backend (attempt ${restartCount}/${maxRestarts})...`);
+        console.error(`[Electron] Error was: ${errorPreview}`);
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('backend-status', {
             status: 'restarting',
-            message: `Backend crashed. Restarting... (${restartCount}/${maxRestarts})`,
+            message: `Backend crashed. Restarting... (${restartCount}/${maxRestarts})\n\nError: ${errorPreview}`,
           });
         }
         setTimeout(() => startBackend(port), 3000);
