@@ -81,7 +81,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "audio_output": {  # Settings related to the format of generated audio.
         "format": "wav",  # Output audio format (e.g., 'wav', 'mp3').
         "sample_rate": 24000,  # Sample rate of the output audio in Hz.
-        "max_reference_duration_sec": 30,  # Maximum duration for reference audio files.
+        "max_reference_duration_sec": 60,  # Maximum duration for reference audio files (60s to allow longer clips).
         "save_to_disk": False,  # If true, save generated audio files to disk in outputs folder.
     },
     "ui_state": {  # Stores user interface preferences and last-used values.
