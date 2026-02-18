@@ -1,18 +1,25 @@
 /**
- * VoiceCraft Setup Module
- * Handles first-run setup: Python installation, dependencies, model download
+ * VoiceCraft Setup Module — R2 Archive Installer
+ * Downloads pre-built archives from Cloudflare R2 instead of using pip.
+ * Supports resume on interrupted downloads via HTTP Range requests.
  */
 
-const { spawn, execSync } = require('child_process');
+const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
+const http = require('http');
 const https = require('https');
 const { app } = require('electron');
 
-// Configuration
-const PYTHON_VERSION = '3.10.11';
-const PYTHON_EMBED_URL = `https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip`;
-const GET_PIP_URL = 'https://bootstrap.pypa.io/get-pip.py';
+// R2 CDN base URL — all setup downloads come from here
+const R2_BASE_URL = 'https://pub-47fe74e29e49481c8ace643cd33ab71d.r2.dev/v1';
+
+// Setup version — bump when archive format changes to force re-setup
+const SETUP_VERSION = 2;
+
+// Minimum free disk space required (GB)
+const MIN_FREE_SPACE_GB = 10;
 
 class SetupManager {
   constructor(mainWindow) {
@@ -23,7 +30,8 @@ class SetupManager {
       : path.join(process.resourcesPath, 'backend');
     this.dataDir = app.getPath('userData');
     this.pythonDir = path.join(this.dataDir, 'python');
-    this.venvDir = path.join(this.dataDir, 'venv');
+    this.modelsDir = path.join(this.dataDir, 'models');
+    this.aborted = false;
   }
 
   sendProgress(stage, percent, message, log = null) {
@@ -50,7 +58,7 @@ class SetupManager {
       availableSpace: 'Unknown',
     };
 
-    const MIN_VRAM_GB = 4; // Minimum 4GB VRAM required
+    const MIN_VRAM_GB = 4;
 
     // Check for existing Python
     try {
@@ -67,7 +75,6 @@ class SetupManager {
     // Check for NVIDIA GPU and VRAM
     try {
       if (process.platform === 'win32') {
-        // Get GPU name
         const nameResult = execSync('nvidia-smi --query-gpu=name --format=csv,noheader', {
           encoding: 'utf8',
           timeout: 5000,
@@ -76,13 +83,12 @@ class SetupManager {
           info.hasNvidiaGpu = true;
           info.gpuName = nameResult.trim().split('\n')[0];
 
-          // Get VRAM in MB
           const vramResult = execSync('nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits', {
             encoding: 'utf8',
             timeout: 5000,
           });
           const vramMB = parseInt(vramResult.trim().split('\n')[0]);
-          info.gpuVram = Math.round(vramMB / 1024 * 10) / 10; // Convert to GB with 1 decimal
+          info.gpuVram = Math.round(vramMB / 1024 * 10) / 10;
           info.hasEnoughVram = info.gpuVram >= MIN_VRAM_GB;
         }
       }
@@ -100,7 +106,7 @@ class SetupManager {
         const freeBytes = parseInt(result.split('\n')[1].trim());
         const freeGB = (freeBytes / (1024 * 1024 * 1024)).toFixed(1);
         info.availableSpace = `${freeGB} GB`;
-        info.hasEnoughSpace = freeGB > 5; // Need at least 5GB
+        info.hasEnoughSpace = freeGB >= MIN_FREE_SPACE_GB;
       }
     } catch (e) {
       // Couldn't check disk space
@@ -112,13 +118,12 @@ class SetupManager {
   findPython() {
     const candidates = [];
 
-    // Check our installed Python first
     if (process.platform === 'win32') {
-      candidates.push(path.join(this.venvDir, 'Scripts', 'python.exe'));
-      candidates.push(path.join(this.pythonDir, 'python.exe'));
+      candidates.push(path.join(this.dataDir, 'python', 'python.exe'));
+      candidates.push(path.join(this.dataDir, 'venv', 'Scripts', 'python.exe'));
       candidates.push(path.join(this.backendDir, 'venv', 'Scripts', 'python.exe'));
     } else {
-      candidates.push(path.join(this.venvDir, 'bin', 'python'));
+      candidates.push(path.join(this.dataDir, 'venv', 'bin', 'python'));
       candidates.push(path.join(this.backendDir, 'venv', 'bin', 'python'));
     }
 
@@ -128,296 +133,355 @@ class SetupManager {
       }
     }
 
-    // Try system Python
-    try {
-      const cmd = process.platform === 'win32' ? 'where python' : 'which python3';
-      const result = execSync(cmd, { encoding: 'utf8' });
-      const pythonPath = result.trim().split('\n')[0];
-      if (fs.existsSync(pythonPath)) {
-        return pythonPath;
-      }
-    } catch (e) {}
-
     return null;
   }
 
-  async downloadFile(url, destPath, progressCallback) {
-    return new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(destPath);
+  // ─── R2 Archive Methods ───────────────────────────────────────────
 
-      https.get(url, (response) => {
-        if (response.statusCode === 302 || response.statusCode === 301) {
-          // Follow redirect
-          https.get(response.headers.location, (res) => {
-            this.handleDownload(res, file, progressCallback, resolve, reject);
-          });
-        } else {
-          this.handleDownload(response, file, progressCallback, resolve, reject);
+  /**
+   * Fetch manifest.json from R2. Contains archive list, sizes, and SHA-256 hashes.
+   */
+  async fetchManifest() {
+    const url = `${R2_BASE_URL}/manifest.json`;
+    console.log(`[Setup] Fetching manifest from ${url}`);
+
+    return new Promise((resolve, reject) => {
+      const get = url.startsWith('https') ? https.get : http.get;
+      get(url, (res) => {
+        if (res.statusCode === 301 || res.statusCode === 302) {
+          const redirectGet = res.headers.location.startsWith('https') ? https.get : http.get;
+          redirectGet(res.headers.location, (redirectRes) => {
+            this._readJson(redirectRes, resolve, reject);
+          }).on('error', reject);
+          return;
         }
+        if (res.statusCode !== 200) {
+          reject(new Error(`Failed to fetch manifest: HTTP ${res.statusCode}`));
+          return;
+        }
+        this._readJson(res, resolve, reject);
       }).on('error', reject);
     });
   }
 
-  handleDownload(response, file, progressCallback, resolve, reject) {
-    const totalSize = parseInt(response.headers['content-length'], 10);
-    let downloadedSize = 0;
-
-    response.on('data', (chunk) => {
-      downloadedSize += chunk.length;
-      if (progressCallback && totalSize) {
-        progressCallback(downloadedSize / totalSize);
+  _readJson(res, resolve, reject) {
+    let data = '';
+    res.on('data', (chunk) => { data += chunk; });
+    res.on('end', () => {
+      try {
+        resolve(JSON.parse(data));
+      } catch (e) {
+        reject(new Error(`Invalid manifest JSON: ${e.message}`));
       }
     });
-
-    response.pipe(file);
-
-    file.on('finish', () => {
-      file.close();
-      resolve();
-    });
-
-    file.on('error', reject);
+    res.on('error', reject);
   }
 
-  async extractZip(zipPath, destDir) {
-    // Use PowerShell on Windows to extract
-    if (process.platform === 'win32') {
-      execSync(
-        `powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`,
-        { encoding: 'utf8' }
-      );
-    }
-  }
+  /**
+   * Download a file with HTTP Range resume support.
+   * Writes to .partial file, renames on completion.
+   */
+  async downloadFileWithResume(url, destPath, expectedSize, progressCb) {
+    const partialPath = destPath + '.partial';
+    let startByte = 0;
 
-  async installPythonEmbedded() {
-    this.sendProgress('python', 5, 'Downloading Python...', 'Starting Python download');
-
-    fs.mkdirSync(this.pythonDir, { recursive: true });
-
-    const zipPath = path.join(this.dataDir, 'python.zip');
-
-    // Download Python embedded
-    await this.downloadFile(PYTHON_EMBED_URL, zipPath, (progress) => {
-      this.sendProgress('python', 5 + progress * 10, `Downloading Python... ${Math.round(progress * 100)}%`);
-    });
-
-    this.sendProgress('python', 15, 'Extracting Python...', 'Extracting Python archive');
-
-    // Extract
-    await this.extractZip(zipPath, this.pythonDir);
-
-    // Enable pip by modifying python310._pth
-    const pthFile = path.join(this.pythonDir, 'python310._pth');
-    if (fs.existsSync(pthFile)) {
-      let content = fs.readFileSync(pthFile, 'utf8');
-      content = content.replace('#import site', 'import site');
-      fs.writeFileSync(pthFile, content);
+    // Check for existing partial download
+    if (fs.existsSync(partialPath)) {
+      const stat = fs.statSync(partialPath);
+      startByte = stat.size;
+      if (expectedSize && startByte >= expectedSize) {
+        // Partial is already full size, just rename
+        fs.renameSync(partialPath, destPath);
+        return;
+      }
+      console.log(`[Setup] Resuming download from byte ${startByte}`);
     }
 
-    // Download and install pip
-    this.sendProgress('python', 18, 'Installing pip...', 'Downloading get-pip.py');
+    return new Promise((resolve, reject) => {
+      const headers = {};
+      if (startByte > 0) {
+        headers['Range'] = `bytes=${startByte}-`;
+      }
 
-    const getPipPath = path.join(this.dataDir, 'get-pip.py');
-    await this.downloadFile(GET_PIP_URL, getPipPath, () => {});
+      const makeRequest = (requestUrl) => {
+        const getFunc = requestUrl.startsWith('https') ? https.get : http.get;
+        const urlObj = new URL(requestUrl);
 
-    const pythonExe = path.join(this.pythonDir, 'python.exe');
-    execSync(`"${pythonExe}" "${getPipPath}"`, {
-      cwd: this.pythonDir,
-      encoding: 'utf8',
-    });
-
-    // Cleanup
-    fs.unlinkSync(zipPath);
-    fs.unlinkSync(getPipPath);
-
-    this.sendProgress('python', 25, 'Python installed', 'Python installation complete');
-  }
-
-  async installDependencies(useGpu) {
-    this.sendProgress('dependencies', 30, 'Installing dependencies...', 'Starting pip install');
-
-    const pythonPath = this.findPython() || path.join(this.pythonDir, 'python.exe');
-
-    // Upgrade pip first (async to not block UI)
-    this.sendProgress('dependencies', 32, 'Upgrading pip...', 'pip install --upgrade pip');
-    await this.runPipCommand(pythonPath, ['install', '--upgrade', 'pip']);
-
-    // Install all dependencies from requirements file
-    this.sendProgress('dependencies', 35, 'Installing dependencies (this may take a while)...', 'pip install -r requirements.txt');
-
-    const requirementsFile = useGpu ? 'requirements-nvidia.txt' : 'requirements.txt';
-    const reqPath = path.join(this.backendDir, requirementsFile);
-
-    if (fs.existsSync(reqPath)) {
-      await this.runPipCommand(pythonPath, ['install', '-r', reqPath, '--no-cache-dir'], (progress, message) => {
-        // Update progress based on pip output
-        const percent = Math.round(35 + (progress * 35)); // 35% to 70%
-        this.sendProgress('dependencies', percent, 'Installing dependencies...', message);
-      });
-      this.sendProgress('dependencies', 70, 'Dependencies installed', 'All dependencies installed successfully');
-    } else {
-      this.sendProgress('dependencies', 70, 'Requirements file not found', `Missing: ${reqPath}`);
-    }
-  }
-
-  // Run pip command asynchronously to not block UI
-  runPipCommand(pythonPath, args, progressCallback = null) {
-    return new Promise((resolve) => {
-      const proc = spawn(pythonPath, ['-m', 'pip', ...args], {
-        cwd: this.backendDir,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
-        shell: process.platform === 'win32',
-      });
-
-      let outputLines = [];
-      let progressEstimate = 0;
-
-      const handleOutput = (data) => {
-        const text = data.toString();
-        const lines = text.split('\n').filter(l => l.trim());
-
-        lines.forEach(line => {
-          outputLines.push(line);
-
-          // Estimate progress from pip output
-          if (line.includes('Downloading')) {
-            progressEstimate = Math.min(progressEstimate + 0.05, 0.8);
-          } else if (line.includes('Installing collected')) {
-            progressEstimate = 0.9;
-          } else if (line.includes('Successfully installed')) {
-            progressEstimate = 1.0;
+        const req = getFunc({
+          hostname: urlObj.hostname,
+          port: urlObj.port,
+          path: urlObj.pathname + urlObj.search,
+          headers,
+        }, (res) => {
+          // Handle redirects (up to 5 hops)
+          if (res.statusCode === 301 || res.statusCode === 302) {
+            makeRequest(res.headers.location);
+            return;
           }
 
-          if (progressCallback) {
-            progressCallback(progressEstimate, line.slice(-100));
+          // 200 = full content (server doesn't support Range or fresh start)
+          // 206 = partial content (resume working)
+          if (res.statusCode === 200) {
+            startByte = 0; // Server sent full file, start from scratch
+          } else if (res.statusCode !== 206) {
+            reject(new Error(`Download failed: HTTP ${res.statusCode}`));
+            return;
           }
+
+          const flags = startByte > 0 && res.statusCode === 206 ? 'a' : 'w';
+          const file = fs.createWriteStream(partialPath, { flags });
+
+          const totalSize = expectedSize || (parseInt(res.headers['content-length'], 10) + startByte);
+          let downloaded = startByte;
+
+          res.on('data', (chunk) => {
+            downloaded += chunk.length;
+            if (progressCb && totalSize) {
+              progressCb(downloaded, totalSize);
+            }
+          });
+
+          res.pipe(file);
+
+          file.on('finish', () => {
+            file.close(() => {
+              try {
+                if (fs.existsSync(destPath)) {
+                  fs.unlinkSync(destPath);
+                }
+                fs.renameSync(partialPath, destPath);
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            });
+          });
+
+          file.on('error', (err) => {
+            file.close();
+            reject(err);
+          });
+
+          res.on('error', (err) => {
+            file.close();
+            reject(err);
+          });
+        });
+
+        req.on('error', reject);
+        req.setTimeout(30000, () => {
+          req.destroy();
+          reject(new Error('Connection timed out'));
         });
       };
 
-      proc.stdout.on('data', handleOutput);
-      proc.stderr.on('data', handleOutput);
-
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          console.error('[Setup] pip exited with code:', code);
-          console.error('[Setup] Last output:', outputLines.slice(-10).join('\n'));
-        }
-        resolve(code === 0);
-      });
-
-      proc.on('error', (err) => {
-        console.error('[Setup] pip spawn error:', err);
-        resolve(false);
-      });
+      makeRequest(url);
     });
   }
 
-  async downloadModel(modelId) {
-    this.sendProgress('model', 75, `Downloading ${modelId} model...`, 'Starting model download');
+  /**
+   * Verify SHA-256 checksum of a file.
+   */
+  async verifyChecksum(filePath, expectedSha256) {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = fs.createReadStream(filePath);
 
-    const pythonPath = this.findPython() || path.join(this.pythonDir, 'python.exe');
+      stream.on('data', (chunk) => hash.update(chunk));
+      stream.on('end', () => {
+        const actual = hash.digest('hex');
+        if (actual === expectedSha256) {
+          resolve(true);
+        } else {
+          reject(new Error(
+            `Checksum mismatch for ${path.basename(filePath)}: expected ${expectedSha256.slice(0, 12)}..., got ${actual.slice(0, 12)}...`
+          ));
+        }
+      });
+      stream.on('error', reject);
+    });
+  }
 
-    // Update config to use selected model
-    const configPath = path.join(this.backendDir, 'config.yaml');
-    if (fs.existsSync(configPath)) {
-      let config = fs.readFileSync(configPath, 'utf8');
+  /**
+   * Extract a zip archive using tar.exe (built into Windows 10+, much faster than PowerShell).
+   * Falls back to PowerShell Expand-Archive if tar fails.
+   */
+  async extractZip(zipPath, destDir) {
+    fs.mkdirSync(destDir, { recursive: true });
 
-      const modelMapping = {
-        turbo: 'chatterbox-turbo',
-        original: 'ResembleAI/chatterbox',
-        multilingual: 'chatterbox-multilingual',
-      };
-
-      config = config.replace(
-        /repo_id:\s*.+/,
-        `repo_id: ${modelMapping[modelId] || 'chatterbox-turbo'}`
+    try {
+      // tar.exe handles zip files and is 10x faster than PowerShell
+      execSync(`tar.exe -xf "${zipPath}" -C "${destDir}"`, {
+        encoding: 'utf8',
+        timeout: 600000, // 10 min timeout for large archives
+        windowsHide: true,
+      });
+    } catch (tarError) {
+      console.log('[Setup] tar.exe failed, falling back to PowerShell:', tarError.message);
+      execSync(
+        `powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force"`,
+        {
+          encoding: 'utf8',
+          timeout: 1200000, // 20 min for PowerShell (slower)
+          windowsHide: true,
+        }
       );
-      fs.writeFileSync(configPath, config);
+    }
+  }
+
+  /**
+   * Download, verify, extract, and clean up a single archive.
+   * @param {string} uiStage — stage name for frontend indicators ('python', 'dependencies', 'model')
+   */
+  async downloadAndInstallArchive(archiveInfo, archiveKey, progressStart, progressEnd, uiStage) {
+    const { filename, size, sha256 } = archiveInfo;
+    const zipPath = path.join(this.dataDir, filename);
+    const label = archiveKey.replace(/-/g, ' ');
+
+    // Download
+    this.sendProgress(uiStage, progressStart, `Downloading ${label}...`, `Starting download of ${filename}`);
+
+    await this.downloadFileWithResume(
+      `${R2_BASE_URL}/${filename}`,
+      zipPath,
+      size,
+      (downloaded, total) => {
+        const dlPct = downloaded / total;
+        // Download takes 70% of this archive's progress range
+        const pct = progressStart + (dlPct * (progressEnd - progressStart) * 0.7);
+        const dlMB = (downloaded / (1024 * 1024)).toFixed(0);
+        const totalMB = (total / (1024 * 1024)).toFixed(0);
+        this.sendProgress(uiStage, Math.round(pct), `Downloading ${label}... ${dlMB}/${totalMB} MB`);
+      }
+    );
+
+    // Verify checksum
+    const verifyStart = progressStart + (progressEnd - progressStart) * 0.7;
+    this.sendProgress(uiStage, Math.round(verifyStart), `Verifying ${label}...`, `Checking SHA-256 for ${filename}`);
+
+    try {
+      await this.verifyChecksum(zipPath, sha256);
+      console.log(`[Setup] Checksum OK: ${filename}`);
+    } catch (checksumErr) {
+      // Checksum failed — delete and throw so caller can retry
+      console.error(`[Setup] ${checksumErr.message}`);
+      try { fs.unlinkSync(zipPath); } catch (e) {}
+      throw checksumErr;
     }
 
-    // Start the server briefly to trigger model download
-    this.sendProgress('model', 80, 'Downloading model (this may take several minutes)...', 'Starting model download');
+    // Extract
+    const extractStart = progressStart + (progressEnd - progressStart) * 0.8;
+    this.sendProgress(uiStage, Math.round(extractStart), `Extracting ${label}...`, `Extracting ${filename}`);
 
-    // Run the download script
-    const downloadScript = path.join(this.backendDir, 'download_model.py');
+    await this.extractZip(zipPath, this.dataDir);
+    console.log(`[Setup] Extracted: ${filename}`);
 
-    return new Promise((resolve, reject) => {
-      const proc = spawn(pythonPath, [downloadScript], {
-        cwd: this.backendDir,
-        env: { ...process.env, HF_HUB_DISABLE_PROGRESS_BARS: '0' },
-      });
+    // Clean up zip
+    try { fs.unlinkSync(zipPath); } catch (e) {}
 
-      let lastProgress = 80;
-
-      proc.stdout.on('data', (data) => {
-        const msg = data.toString();
-        this.sendProgress('model', lastProgress, 'Downloading model...', msg.slice(-100));
-
-        // Try to parse progress
-        const match = msg.match(/(\d+)%/);
-        if (match) {
-          const pct = parseInt(match[1]);
-          lastProgress = Math.round(80 + (pct * 0.15)); // 80-95%
-          this.sendProgress('model', lastProgress, `Downloading model... ${pct}%`);
-        }
-      });
-
-      proc.stderr.on('data', (data) => {
-        this.sendProgress('model', lastProgress, 'Downloading model...', data.toString().slice(-100));
-      });
-
-      proc.on('close', (code) => {
-        if (code === 0) {
-          this.sendProgress('model', 95, 'Model downloaded', 'Model download complete');
-          resolve();
-        } else {
-          // Model will download on first use anyway
-          this.sendProgress('model', 95, 'Model will download on first use', 'Continuing...');
-          resolve();
-        }
-      });
-
-      proc.on('error', (err) => {
-        this.sendProgress('model', 95, 'Model will download on first use', err.message);
-        resolve(); // Continue anyway
-      });
-    });
+    this.sendProgress(uiStage, Math.round(progressEnd), `${label} installed`, `Completed ${filename}`);
   }
+
+  // ─── Main Setup Flow ──────────────────────────────────────────────
 
   async runSetup(options) {
     try {
-      const { model, useGpu } = options;
+      const { useGpu } = options;
+      this.aborted = false;
 
-      // Check if Python is available
-      let pythonPath = this.findPython();
+      // Step 1: Fetch manifest
+      this.sendProgress('python', 2, 'Fetching package manifest...', 'Connecting to download server');
 
-      if (!pythonPath) {
-        // Install Python
-        await this.installPythonEmbedded();
-        pythonPath = path.join(this.pythonDir, 'python.exe');
-      } else {
-        this.sendProgress('python', 25, 'Python already installed', `Found: ${pythonPath}`);
+      let manifest;
+      try {
+        manifest = await this.fetchManifest();
+      } catch (err) {
+        throw new Error(`Cannot reach download server: ${err.message}. Check your internet connection.`);
       }
 
-      // Install dependencies
-      await this.installDependencies(useGpu);
+      console.log(`[Setup] Manifest version: ${manifest.version}, build: ${manifest.buildDate}`);
 
-      // Download model
-      await this.downloadModel(model);
+      // Step 2: Build archive list
+      const archiveKeys = ['python-core'];
 
-      // Mark setup as complete
+      if (useGpu) {
+        archiveKeys.push('pytorch-nvidia-cu121');
+      } else {
+        // Use CPU archive if available, otherwise skip (pytorch-cpu may not exist yet)
+        if (manifest.archives['pytorch-cpu']) {
+          archiveKeys.push('pytorch-cpu');
+        } else {
+          archiveKeys.push('pytorch-nvidia-cu121');
+          console.log('[Setup] No CPU-only PyTorch archive available, using NVIDIA version');
+        }
+      }
+
+      archiveKeys.push('packages');
+      archiveKeys.push('models-turbo');
+
+      // Validate all archives exist in manifest
+      for (const key of archiveKeys) {
+        if (!manifest.archives[key]) {
+          throw new Error(`Archive "${key}" not found in manifest. The download server may need updating.`);
+        }
+      }
+
+      // Calculate total download size
+      const totalSize = archiveKeys.reduce((sum, key) => sum + manifest.archives[key].size, 0);
+      const totalGB = (totalSize / (1024 ** 3)).toFixed(1);
+      console.log(`[Setup] Total download: ${totalGB} GB (${archiveKeys.length} archives)`);
+
+      // Step 3: Download + verify + extract each archive
+      // Map archive keys to UI stage names and progress ranges
+      // Frontend expects: 'python' (5-25%), 'dependencies' (25-70%), 'model' (70-95%)
+      const archiveStageMap = {
+        'python-core': { uiStage: 'python', pStart: 5, pEnd: 25 },
+        'pytorch-nvidia-cu121': { uiStage: 'dependencies', pStart: 25, pEnd: 55 },
+        'pytorch-cpu': { uiStage: 'dependencies', pStart: 25, pEnd: 55 },
+        'packages': { uiStage: 'dependencies', pStart: 55, pEnd: 70 },
+        'models-turbo': { uiStage: 'model', pStart: 70, pEnd: 95 },
+      };
+
+      for (let i = 0; i < archiveKeys.length; i++) {
+        if (this.aborted) throw new Error('Setup cancelled');
+
+        const key = archiveKeys[i];
+        const info = manifest.archives[key];
+        const stageInfo = archiveStageMap[key] || { uiStage: 'dependencies', pStart: 25, pEnd: 70 };
+
+        console.log(`[Setup] Archive ${i + 1}/${archiveKeys.length}: ${key} (${(info.size / (1024 ** 2)).toFixed(0)} MB)`);
+        await this.downloadAndInstallArchive(info, key, stageInfo.pStart, stageInfo.pEnd, stageInfo.uiStage);
+      }
+
+      // Step 4: Post-install fixups
+      this.sendProgress('model', 96, 'Finalizing installation...', 'Writing setup config');
+
+      // Ensure python310._pth has 'import site' uncommented
+      const pthFile = path.join(this.pythonDir, 'python310._pth');
+      if (fs.existsSync(pthFile)) {
+        let content = fs.readFileSync(pthFile, 'utf8');
+        if (content.includes('#import site')) {
+          content = content.replace('#import site', 'import site');
+          fs.writeFileSync(pthFile, content);
+          console.log('[Setup] Enabled site-packages in python310._pth');
+        }
+      }
+
+      // Step 5: Mark setup as complete
       const setupFlagPath = path.join(this.dataDir, '.setup-complete');
       fs.writeFileSync(setupFlagPath, JSON.stringify({
-        version: '1.0.0',
-        model,
+        setupVersion: SETUP_VERSION,
+        model: options.model || 'turbo',
         useGpu,
+        manifestVersion: manifest.version,
+        buildDate: manifest.buildDate,
         timestamp: new Date().toISOString(),
       }));
 
       this.sendProgress('complete', 100, 'Setup complete!', 'VoiceCraft is ready to use');
-
       return { success: true };
     } catch (error) {
+      console.error('[Setup] Error:', error.message);
       this.sendProgress('error', 0, error.message, error.stack);
       throw error;
     }
@@ -425,7 +489,25 @@ class SetupManager {
 
   isSetupComplete() {
     const setupFlagPath = path.join(this.dataDir, '.setup-complete');
-    return fs.existsSync(setupFlagPath);
+    if (!fs.existsSync(setupFlagPath)) {
+      return false;
+    }
+
+    // Check setup version — old installs (no setupVersion) trigger re-setup
+    try {
+      const data = JSON.parse(fs.readFileSync(setupFlagPath, 'utf8'));
+      if (!data.setupVersion || data.setupVersion < SETUP_VERSION) {
+        console.log(`[Setup] Old setup version (${data.setupVersion || 'none'}), need re-setup`);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  abort() {
+    this.aborted = true;
   }
 }
 
