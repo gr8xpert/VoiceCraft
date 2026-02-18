@@ -227,33 +227,37 @@ function GenerateView() {
           )}
         </div>
 
-        {/* Voice Selection - Compact */}
+        {/* Voice Selection — Two prominent mode buttons */}
         <div className="card flex-[2] !p-3">
           <div className="flex items-center gap-2 mb-2">
             <Mic className="w-4 h-4 text-[var(--color-accent)]" />
             <span className="font-medium text-sm">Voice</span>
-            <div className="flex gap-1 ml-auto">
-              <button
-                className={`px-2 py-1 rounded text-xs ${
-                  voiceMode === 'predefined'
-                    ? 'bg-[var(--color-accent)] text-white'
-                    : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]'
-                }`}
-                onClick={() => setVoiceMode('predefined')}
-              >
-                Predefined
-              </button>
-              <button
-                className={`px-2 py-1 rounded text-xs ${
-                  voiceMode === 'clone'
-                    ? 'bg-[var(--color-accent)] text-white'
-                    : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]'
-                }`}
-                onClick={() => setVoiceMode('clone')}
-              >
-                Clone
-              </button>
-            </div>
+          </div>
+
+          {/* Mode toggle — large, equal-weight buttons */}
+          <div className="flex gap-2 mb-3">
+            <button
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                voiceMode === 'clone'
+                  ? 'bg-[var(--color-accent)] text-white shadow-lg shadow-[var(--color-accent)]/25'
+                  : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'
+              }`}
+              onClick={() => setVoiceMode('clone')}
+            >
+              <Mic className="w-4 h-4" />
+              Clone Voice
+            </button>
+            <button
+              className={`flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                voiceMode === 'predefined'
+                  ? 'bg-[var(--color-accent)] text-white shadow-lg shadow-[var(--color-accent)]/25'
+                  : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:bg-[var(--color-border)]'
+              }`}
+              onClick={() => setVoiceMode('predefined')}
+            >
+              <Volume2 className="w-4 h-4" />
+              Predefined
+            </button>
           </div>
 
           {voiceMode === 'predefined' ? (
@@ -276,11 +280,11 @@ function GenerateView() {
             <div>
               <div className="flex items-center gap-2">
                 <select
-                  className="select flex-1 !py-1 text-sm"
+                  className="select flex-1 !py-1.5 text-sm"
                   value={selectedReferenceAudio || ''}
                   onChange={(e) => setSelectedReferenceAudio(e.target.value)}
                 >
-                  <option value="">Select reference...</option>
+                  <option value="">Select reference audio...</option>
                   {referenceFiles.map((file) => (
                     <option key={file} value={file}>{file}</option>
                   ))}
@@ -295,9 +299,9 @@ function GenerateView() {
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isUploading}
-                  className="btn-secondary !py-1 !px-2 text-xs flex items-center gap-1"
+                  className="btn-secondary !py-1.5 !px-3 text-sm flex items-center gap-1.5"
                 >
-                  {isUploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                  {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                   Upload
                 </button>
               </div>

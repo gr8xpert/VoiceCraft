@@ -76,6 +76,7 @@ async function startBackend(port) {
     VOICECRAFT_ELECTRON: '1',  // Signal to server.py to skip browser auto-open
     PYTHONPATH: pythonPath2,
     PYTHONIOENCODING: 'utf-8',
+    HF_HOME: path.join(dataDir, 'models'),  // Pre-downloaded models from R2
   };
 
   console.log(`[Electron] PYTHONPATH: ${pythonPath2}`);
@@ -252,10 +253,10 @@ function createWindow() {
   setupManager = new SetupManager(mainWindow);
 }
 
-// Check if first-run setup is needed
+// Check if first-run setup is needed (version-aware)
 function needsSetup() {
-  const setupFlagPath = path.join(app.getPath('userData'), '.setup-complete');
-  return !fs.existsSync(setupFlagPath);
+  const sm = new SetupManager(null);
+  return !sm.isSetupComplete();
 }
 
 app.whenReady().then(async () => {

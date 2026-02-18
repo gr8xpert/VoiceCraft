@@ -6,13 +6,11 @@ A powerful desktop application for AI-powered text-to-speech with voice cloning 
 
 - **High-Quality TTS**: Natural-sounding voice synthesis using Chatterbox TTS models
 - **Voice Cloning**: Clone any voice with just a 5-30 second audio sample
-- **Multiple Models**:
-  - **Original**: Best quality English TTS
-  - **Multilingual**: Supports 23 languages
 - **28 Predefined Voices**: Ready-to-use voice presets
 - **GPU Accelerated**: NVIDIA CUDA support for fast generation (fp16 optimized)
+- **One-Click Installer**: ~93MB installer, automatic setup downloads ~7GB of pre-built packages from CDN
+- **Resume-Capable Downloads**: Setup downloads can resume if interrupted — no need to start over
 - **Compact UI**: Clean, modern interface with orange/dark theme
-- **Standalone Installer**: ~93MB installer, downloads models on first run
 
 ## System Requirements
 
@@ -21,8 +19,8 @@ A powerful desktop application for AI-powered text-to-speech with voice cloning 
 | OS | Windows 10 64-bit | Windows 11 |
 | GPU | NVIDIA GPU with **4GB+ VRAM** | RTX 3060+ (6GB+ VRAM) |
 | RAM | 8GB | 16GB |
-| Storage | 5GB free space | 10GB free space |
-| GPU Driver | CUDA 11.8+ | Latest NVIDIA Driver |
+| Storage | 10GB free space | 15GB free space |
+| GPU Driver | CUDA 12.1+ | Latest NVIDIA Driver |
 
 ### Supported GPUs
 - GTX 1650+ (4GB)
@@ -35,7 +33,6 @@ A powerful desktop application for AI-powered text-to-speech with voice cloning 
 - GTX 1050 and below - insufficient VRAM
 - AMD GPUs - CUDA required
 - Intel GPUs - CUDA required
-- CPU-only systems - too slow for practical use
 
 ## Installation
 
@@ -43,12 +40,16 @@ A powerful desktop application for AI-powered text-to-speech with voice cloning 
 
 1. Download `VoiceCraft Setup 1.0.0.exe` from [Releases](https://github.com/gr8xpert/VoiceCraft/releases)
 2. Run the installer
-3. Setup wizard will:
-   - Check system requirements (GPU, VRAM ≥4GB, disk space)
-   - Download Python environment (~100MB)
-   - Install dependencies (~500MB)
-   - Download TTS model (~1.5GB)
-4. Launch VoiceCraft and start generating!
+3. The setup wizard will automatically:
+   - Check system requirements (GPU, VRAM, disk space)
+   - Download Python runtime (~22 MB)
+   - Download PyTorch + CUDA 12.1 (~2.9 GB)
+   - Download Python packages (~313 MB)
+   - Download TTS model (~4 GB)
+4. All downloads come from a single CDN with resume support — if your connection drops, setup picks up where it left off
+5. Launch VoiceCraft and start generating!
+
+> **Note**: First-run setup downloads ~7 GB total. Ensure a stable internet connection. The setup wizard shows real-time progress for each stage.
 
 ### From Source (Developers)
 
@@ -91,12 +92,7 @@ pip install -r requirements-nvidia.txt
 #### Development
 
 ```bash
-# Run frontend dev server
-cd frontend
-npm run dev
-
-# In another terminal, run Electron
-cd electron
+# Run in development mode (frontend + Electron concurrently)
 npm run dev
 ```
 
@@ -109,7 +105,7 @@ npm run build
 
 # Build Electron installer
 cd electron
-npm run build
+npx electron-builder --win
 ```
 
 The installer will be created at `dist-electron/VoiceCraft Setup 1.0.0.exe`
@@ -121,7 +117,7 @@ VoiceCraft/
 ├── electron/              # Electron main process
 │   ├── main.js           # Main entry point
 │   ├── preload.js        # Preload script for IPC
-│   ├── setup.js          # First-run setup wizard logic
+│   ├── setup.js          # First-run setup (R2 CDN downloads)
 │   └── package.json      # Electron config & build settings
 ├── frontend/             # React frontend
 │   ├── src/
@@ -159,7 +155,7 @@ server:
   port: 8004
 
 model:
-  repo_id: "chatterbox"  # or "chatterbox-multilingual"
+  repo_id: "chatterbox"
 
 tts_engine:
   device: "cuda"  # auto, cuda, cpu
@@ -179,7 +175,7 @@ audio_output:
 
 ### Basic Text-to-Speech
 
-1. Select a voice from predefined voices or upload your own for cloning
+1. Select a voice from predefined voices or clone your own
 2. Type or paste text in the text area
 3. Adjust settings (optional):
    - **Exaggeration**: Controls expressiveness (0-1)
@@ -191,7 +187,7 @@ audio_output:
 
 ### Voice Cloning
 
-1. Click "Clone" tab
+1. Click "Clone Voice"
 2. Upload a WAV/MP3 file (5-30 seconds, clear audio)
 3. Generate speech using the cloned voice
 
@@ -203,13 +199,9 @@ audio_output:
 - Use seed value for reproducible results
 - Line breaks in text add natural pauses
 
-## Performance Optimizations
+## Performance
 
-VoiceCraft includes several optimizations for faster generation:
-
-1. **Half Precision (fp16)**: 2x faster inference on NVIDIA GPUs
-2. **Optimized Chunk Size**: 250 characters default (fewer inference calls)
-3. **GPU Memory Management**: Efficient VRAM usage
+VoiceCraft uses half precision (fp16) for 2x faster inference on NVIDIA GPUs.
 
 Expected generation times (RTX 3060):
 - Short text (<100 chars): ~2-3 seconds
@@ -269,6 +261,11 @@ GET /api/ui/initial-data
 - VoiceCraft requires GTX 1650+ or RTX series
 - MX series GPUs are not supported
 
+### Setup download stuck or failed
+- Setup supports automatic resume — restart the app and it will continue from where it left off
+- Ensure stable internet connection (~7 GB total download)
+- Check disk space (need ~10 GB free)
+
 ### "Generation takes too long"
 - Ensure CUDA is being used (check green "NVIDIA GPU" in status bar)
 - Reduce text length or increase chunk size
@@ -276,9 +273,8 @@ GET /api/ui/initial-data
 - Check GPU utilization in Task Manager
 
 ### "Model failed to load"
-- Delete `%APPDATA%\voicecraft-electron` folder and restart
-- Ensure stable internet for model download
-- Check disk space (need ~5GB free)
+- Delete `%APPDATA%\voicecraft` folder and restart to trigger fresh setup
+- Check disk space (need ~10 GB free)
 
 ### "Reference audio too short/long"
 - Voice cloning requires 5-30 seconds of audio
@@ -291,14 +287,8 @@ GET /api/ui/initial-data
 - **Desktop**: Electron 34
 - **Backend**: Python 3.10, FastAPI, Uvicorn
 - **TTS Engine**: Chatterbox TTS (PyTorch, fp16)
-- **Build**: electron-builder
-
-## Color Scheme
-
-- Primary Background: `#1B1B1B`
-- Secondary Background: `#242424`
-- Accent Color: `#FF9F1C` (Orange)
-- Text Primary: `#F5F5F5`
+- **CDN**: Cloudflare R2 (setup downloads)
+- **Build**: electron-builder (NSIS)
 
 ## License
 
@@ -328,4 +318,4 @@ Created by [@gr8xpert](https://github.com/gr8xpert)
 
 ---
 
-**Note**: This application requires an NVIDIA GPU with at least 4GB VRAM for reasonable performance. Systems with less VRAM or CPU-only will not be able to run VoiceCraft.
+**Note**: This application requires an NVIDIA GPU with at least 4GB VRAM for reasonable performance.
